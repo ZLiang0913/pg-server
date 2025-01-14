@@ -1,13 +1,20 @@
 package com.zliang.pg.protocol.codec;
 
+import com.zliang.pg.common.enums.ErrorCode;
+import com.zliang.pg.common.enums.ErrorSeverity;
+import com.zliang.pg.common.vo.ErrorResponse;
 import com.zliang.pg.protocol.common.ChannelAttributeKey;
 import com.zliang.pg.protocol.common.ConnectionAttr;
 import com.zliang.pg.protocol.domain.message.InitialMessage;
 import com.zliang.pg.protocol.domain.StartupState;
+import com.zliang.pg.protocol.pkg.PostgreSQLPacket;
+import com.zliang.pg.protocol.pkg.req.*;
+import com.zliang.pg.protocol.util.ByteBufUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
 
 import java.util.HashMap;
 import java.util.List;
@@ -20,24 +27,40 @@ import java.util.List;
  */
 @Slf4j
 public class PostgreSQLDecoder extends ByteToMessageDecoder {
+    //client第一次发送的是LoginRequest,后续是Command Phase
+    private boolean firstRequest = true;
     @Override
     protected void decode(ChannelHandlerContext channelHandlerContext, ByteBuf byteBuf, List<Object> list) throws Exception {
-        processInitialMessage(channelHandlerContext, byteBuf);
+        HashMap<String, String> initialParameters;
+        StartupState startupState = processInitialMessage(channelHandlerContext, byteBuf);
+        if (startupState instanceof StartupState.Success success) {
+            initialParameters = success.parameters();
+        } else if (startupState instanceof StartupState.SslRequested sslRequested) {
+            startupState = processInitialMessage(channelHandlerContext, byteBuf);
+            if (startupState instanceof StartupState.Success success) {
+                initialParameters = success.parameters();
+            } else {
+                initialParameters = new HashMap<>();
+            }
+        } else {
+            initialParameters = new HashMap<>();
+        }
+        System.out.println("initialParameters:" + initialParameters);
 
-//        if (byteBuf.isReadable(4)) {
-//            int packetSize = byteBuf.getUnsignedMediumLE(0);
-//            if (byteBuf.isReadable(packetSize + 3/*Packet Length*/ + 1/*Packet Num*/)) {
-//
-//            } else {
-//                // data is not full
-//                log.warn("wait data {}", byteBuf);
-//                return;
-//            }
-//        } else {
-//            log.warn("no data {}", byteBuf);
-//            return;
-//        }
-//        list.add(decode(byteBuf));
+        /*if (byteBuf.isReadable(4)) {
+            int packetSize = byteBuf.getUnsignedMediumLE(0);
+            if (byteBuf.isReadable(packetSize + 3*//*Packet Length*//* + 1*//*Packet Num*//*)) {
+
+            } else {
+                // data is not full
+                log.warn("wait data {}", byteBuf);
+                return;
+            }
+        } else {
+            log.warn("no data {}", byteBuf);
+            return;
+        }
+        list.add(decode(byteBuf));*/
         /*if (!startupMessageSeen) {
             val length = msg.readInt();
             val protocolVersion = msg.readInt();
@@ -115,6 +138,51 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
         }*/
     }
 
+    public PostgreSQLPacket decode(ByteBuf buf) {
+        if (firstRequest) {
+            firstRequest = false;
+            LoginRequest request = new LoginRequest();
+            request.read(buf);
+            return request;
+        }
+
+        byte commandId = buf.getByte(4);
+        PostgreSQLPacket result;
+        switch (commandId) {
+            case ComQuit.ID:
+                ComQuit quit = new ComQuit();
+                quit.read(buf);
+                result = quit;
+                break;
+            case ComInitDB.ID:
+                ComInitDB initDB = new ComInitDB();
+                initDB.read(buf);
+                result = initDB;
+                break;
+            case ComQuery.ID:
+                ComQuery query = new ComQuery();
+                query.read(buf);
+                result = query;
+                break;
+            case ComFieldList.ID:
+                ComFieldList fieldList = new ComFieldList();
+                fieldList.read(buf);
+                result = fieldList;
+                break;
+            case ComProcessKill.ID:
+                ComProcessKill kill = new ComProcessKill();
+                kill.read(buf);
+                result = kill;
+                break;
+            default:
+                ComPacket packet = new ComPacket();
+                packet.read(buf);
+                result = packet;
+                break;
+        }
+        return result;
+    }
+
     StartupState processInitialMessage(ChannelHandlerContext ctx, ByteBuf bufferBuf) {
 //        let mut buffer = buffer::read_contents(&mut self.socket, 0).await?;
 
@@ -133,15 +201,13 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
 
     StartupState processStartupMessage(ChannelHandlerContext ctx, InitialMessage.StartupMessage startupMessage) {
         if(startupMessage.getMajor() != 3 || startupMessage.getMinor() != 0) {
-            /*let error_response = protocol::ErrorResponse::new(
-                    protocol::ErrorSeverity::Fatal,
-                    protocol::ErrorCode::FeatureNotSupported,
-                    format!(
-                    "unsupported frontend protocol {}.{}: server supports 3.0 to 3.0",
-                    startup_message.major, startup_message.minor,
-                ),
-            );
-            buffer::write_message(&mut self.socket, error_response).await?;*/
+            var error_response = new ErrorResponse(ErrorSeverity.Fatal,
+                    ErrorCode.FeatureNotSupported,
+                    String.format("unsupported frontend protocol %d.%d: server supports 3.0 to 3.0", startupMessage.getMajor(), startupMessage.getMinor()));
+            ByteBuf buffer = ctx.alloc().buffer();
+            buffer.writeByte('N');
+            ctx.writeAndFlush(buffer);
+//            buffer::write_message(&mut self.socket, error_response).await?;
             return new StartupState.Denied();
         }
 
@@ -165,7 +231,7 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
     StartupState processCancel(ChannelHandlerContext ctx, InitialMessage.CancelRequest canceMessage) {
         log.trace("Cancel request {}", canceMessage);
 
-        ConnectionAttr connectionAttr = ctx.channel().attr(ChannelAttributeKey.CONN_ATTR).get();
+//        ConnectionAttr connectionAttr = ctx.channel().attr(ChannelAttributeKey.CONN_ATTR).get();
         /*if let Some(s) = self
                 .session
                 .session_manager

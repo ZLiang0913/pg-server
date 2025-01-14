@@ -7,6 +7,7 @@ import lombok.Data;
 @Data
 @Builder
 public class ConnectionAttr {
-    private String connectionId;
-    private Session session;
+    private int connectionId;
+    private String schema;
+    private int clientCharset;
 }

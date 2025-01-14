@@ -1,11 +1,27 @@
 package com.zliang.pg.protocol.util;
 
+import com.zliang.pg.common.enums.FrontendMessage;
 import io.netty.buffer.ByteBuf;
+import lombok.extern.slf4j.Slf4j;
 
+import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+@Slf4j
 public class ByteBufUtils {
+
+    public static FrontendMessage read_message(ByteBuf buffer) {
+        // https://www.postgresql.org/docs/14/protocol-message-formats.html
+        byte message_tag = buffer.readByte();
+        let cursor = read_contents(reader, message_tag).await?;
+        let message = parser.parse(message_tag, cursor).await?;
+
+        log.trace("[pg] Decoded {}", message);
+
+        return message;
+    }
+
 
 
 

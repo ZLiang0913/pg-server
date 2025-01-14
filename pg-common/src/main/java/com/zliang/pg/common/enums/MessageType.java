@@ -1,4 +1,4 @@
-package com.zliang.pg.common.vo;
+package com.zliang.pg.common.enums;
 
 /**
  * 类说明：消息的类型定义

@@ -8,7 +8,7 @@ import lombok.Data;
 
 import java.util.HashMap;
 
-import static com.zliang.pg.protocol.common.Constants.*;
+import static com.zliang.pg.common.constants.Constants.*;
 
 
 public interface InitialMessage {

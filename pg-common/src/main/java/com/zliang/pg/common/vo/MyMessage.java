@@ -1,8 +1,8 @@
 package com.zliang.pg.common.vo;
 
+import com.zliang.pg.common.enums.MessageType;
 import lombok.Data;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
