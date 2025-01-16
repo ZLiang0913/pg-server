@@ -1,11 +1,8 @@
 package com.zliang.pg.protocol.handler;
 
-import com.zliang.pg.protocol.common.ChannelAttributeKey;
+import com.zliang.pg.common.exceptions.PgErrorException;
 import com.zliang.pg.protocol.common.ConnectionAttr;
-import com.zliang.pg.protocol.domain.session.Session;
-import com.zliang.pg.protocol.domain.session.SessionState;
-import com.zliang.pg.protocol.pkg.res.ErrorPacket;
-import io.netty.channel.Channel;
+import com.zliang.pg.protocol.pkg.backend.ErrorResponse;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -13,11 +10,7 @@ import io.netty.util.AttributeKey;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 
-import java.net.InetSocketAddress;
-import java.sql.SQLException;
-import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 
 /**
@@ -68,23 +61,10 @@ public class MyServerHandler extends ChannelInboundHandlerAdapter {
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         ConnectionAttr attr = ctx.channel().attr(CONN_ATTR).get();
         log.error("ExceptionCaught ConnectionId:{}", attr.getConnectionId(), cause);
-        byte seq = 1;
-        ErrorPacket errorPacket = new ErrorPacket();
-        errorPacket.setSequenceId(seq);
-        errorPacket.setSqlStateMarker("#");
-        errorPacket.setErrorMessage(cause.getMessage());
-        if (cause instanceof SQLException) {
-            errorPacket.setErrorCode(((SQLException)cause).getErrorCode());
-            errorPacket.setSqlState(((SQLException)cause).getSQLState());
-            if (((SQLException)cause).getErrorCode()
-                    == 4444) {//login error, seq=2 after HandshakePacket 0, LoginRequest 1
-                errorPacket.setSequenceId(++seq);
-            }
-        } else {
-            errorPacket.setErrorCode(1000);
-            errorPacket.setSqlState("10S00");
+        if (cause instanceof PgErrorException error) {
+            ErrorResponse errorResponse = new ErrorResponse(error.getSeverity(), error.getCode(), error.getMessage());
+            ctx.writeAndFlush(errorResponse);
         }
-        ctx.writeAndFlush(errorPacket);
     }
 
     @Override
@@ -92,7 +72,7 @@ public class MyServerHandler extends ChannelInboundHandlerAdapter {
         ConnectionAttr attr = ctx.channel().attr(CONN_ATTR).get();
         log.info("Close ConnectionId:{}", attr.getConnectionId());
 //        try {
-            ctx.channel().attr(CONN_ATTR).set(null);
+        ctx.channel().attr(CONN_ATTR).set(null);
 //            storageProvider.release();
 //        } catch (SQLException exception) {
 //            log.error("channelInactive ", exception);

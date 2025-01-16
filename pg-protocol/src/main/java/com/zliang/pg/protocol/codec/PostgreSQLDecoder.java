@@ -1,15 +1,12 @@
 package com.zliang.pg.protocol.codec;
 
 import com.zliang.pg.common.enums.ErrorCode;
-import com.zliang.pg.common.enums.ErrorSeverity;
-import com.zliang.pg.common.vo.ErrorResponse;
-import com.zliang.pg.protocol.common.ChannelAttributeKey;
-import com.zliang.pg.protocol.common.ConnectionAttr;
-import com.zliang.pg.protocol.domain.message.InitialMessage;
 import com.zliang.pg.protocol.domain.StartupState;
-import com.zliang.pg.protocol.pkg.PostgreSQLPacket;
-import com.zliang.pg.protocol.pkg.req.*;
-import com.zliang.pg.protocol.util.ByteBufUtils;
+import com.zliang.pg.protocol.domain.message.InitialMessage;
+import com.zliang.pg.protocol.enums.AuthenticationRequest;
+import com.zliang.pg.protocol.pkg.backend.ErrorResponse;
+import com.zliang.pg.protocol.pkg.backend.StartupMessage;
+import com.zliang.pg.protocol.util.BufferUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
@@ -27,12 +24,13 @@ import java.util.List;
  */
 @Slf4j
 public class PostgreSQLDecoder extends ByteToMessageDecoder {
-    //client第一次发送的是LoginRequest,后续是Command Phase
-    private boolean firstRequest = true;
+    private boolean startupMessageSeen = false;
+    private boolean sslNegotiationMessageSeen = false;
+
     @Override
     protected void decode(ChannelHandlerContext channelHandlerContext, ByteBuf byteBuf, List<Object> list) throws Exception {
-        HashMap<String, String> initialParameters;
-        StartupState startupState = processInitialMessage(channelHandlerContext, byteBuf);
+        HashMap<String, String> initialParameters = null;
+        /*StartupState startupState = processInitialMessage(channelHandlerContext, byteBuf);
         if (startupState instanceof StartupState.Success success) {
             initialParameters = success.parameters();
         } else if (startupState instanceof StartupState.SslRequested sslRequested) {
@@ -45,22 +43,36 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
         } else {
             initialParameters = new HashMap<>();
         }
-        System.out.println("initialParameters:" + initialParameters);
+        System.out.println("initialParameters:" + initialParameters);*/
 
-        /*if (byteBuf.isReadable(4)) {
-            int packetSize = byteBuf.getUnsignedMediumLE(0);
-            if (byteBuf.isReadable(packetSize + 3*//*Packet Length*//* + 1*//*Packet Num*//*)) {
-
-            } else {
-                // data is not full
-                log.warn("wait data {}", byteBuf);
-                return;
+        if (!startupMessageSeen) {
+            BufferUtil.read_contents(byteBuf, (byte) 0);
+            InitialMessage initialMessage = InitialMessage.from(byteBuf);
+            if (initialMessage instanceof InitialMessage.Startup startup) {
+                // This is the actual startup message
+                log.debug("Startup message seen: {}", startup);
+                startupMessageSeen = true;
+                StartupState startupState = processStartupMessage(channelHandlerContext, startup.startup());
+                if (startupState instanceof StartupState.Success success) {
+                    initialParameters = success.parameters();
+                } else {
+                    initialParameters = new HashMap<>();
+                }
+            } else if (initialMessage instanceof InitialMessage.Cancel cancel) {
+                processCancel(channelHandlerContext, cancel.cancel());
+            } else {//initialMessage instanceof InitialMessage.Gssenc || initialMessage instanceof InitialMessage.Ssl
+                log.debug("SSL Negotiation message seen");
+                sslNegotiationMessageSeen = true;
+                ByteBuf buffer = channelHandlerContext.alloc().buffer();
+                buffer.writeByte('N');
+                channelHandlerContext.writeAndFlush(buffer);
             }
+
+
         } else {
-            log.warn("no data {}", byteBuf);
-            return;
+
         }
-        list.add(decode(byteBuf));*/
+        System.out.println("initialParameters:" + initialParameters);
         /*if (!startupMessageSeen) {
             val length = msg.readInt();
             val protocolVersion = msg.readInt();
@@ -138,53 +150,9 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
         }*/
     }
 
-    public PostgreSQLPacket decode(ByteBuf buf) {
-        if (firstRequest) {
-            firstRequest = false;
-            LoginRequest request = new LoginRequest();
-            request.read(buf);
-            return request;
-        }
-
-        byte commandId = buf.getByte(4);
-        PostgreSQLPacket result;
-        switch (commandId) {
-            case ComQuit.ID:
-                ComQuit quit = new ComQuit();
-                quit.read(buf);
-                result = quit;
-                break;
-            case ComInitDB.ID:
-                ComInitDB initDB = new ComInitDB();
-                initDB.read(buf);
-                result = initDB;
-                break;
-            case ComQuery.ID:
-                ComQuery query = new ComQuery();
-                query.read(buf);
-                result = query;
-                break;
-            case ComFieldList.ID:
-                ComFieldList fieldList = new ComFieldList();
-                fieldList.read(buf);
-                result = fieldList;
-                break;
-            case ComProcessKill.ID:
-                ComProcessKill kill = new ComProcessKill();
-                kill.read(buf);
-                result = kill;
-                break;
-            default:
-                ComPacket packet = new ComPacket();
-                packet.read(buf);
-                result = packet;
-                break;
-        }
-        return result;
-    }
 
     StartupState processInitialMessage(ChannelHandlerContext ctx, ByteBuf bufferBuf) {
-//        let mut buffer = buffer::read_contents(&mut self.socket, 0).await?;
+        bufferBuf = BufferUtil.read_contents(bufferBuf, (byte) 0);
 
         InitialMessage initialMessage = InitialMessage.from(bufferBuf);
         if (initialMessage instanceof InitialMessage.Startup startup) {
@@ -199,39 +167,45 @@ public class PostgreSQLDecoder extends ByteToMessageDecoder {
         }
     }
 
-    StartupState processStartupMessage(ChannelHandlerContext ctx, InitialMessage.StartupMessage startupMessage) {
-        if(startupMessage.getMajor() != 3 || startupMessage.getMinor() != 0) {
-            var error_response = new ErrorResponse(ErrorSeverity.Fatal,
-                    ErrorCode.FeatureNotSupported,
+    StartupState processStartupMessage(ChannelHandlerContext ctx, StartupMessage startupMessage) {
+        if (startupMessage.getMajor() != 3 || startupMessage.getMinor() != 0) {
+            ErrorResponse errorResponse = ErrorResponse.fatal(ErrorCode.FeatureNotSupported,
                     String.format("unsupported frontend protocol %d.%d: server supports 3.0 to 3.0", startupMessage.getMajor(), startupMessage.getMinor()));
-            ByteBuf buffer = ctx.alloc().buffer();
-            buffer.writeByte('N');
-            ctx.writeAndFlush(buffer);
-//            buffer::write_message(&mut self.socket, error_response).await?;
+            ctx.writeAndFlush(errorResponse);
             return new StartupState.Denied();
         }
 
         HashMap<String, String> parameters = startupMessage.getParameters();
         if (!parameters.containsKey("user")) {
-            /*let error_response = protocol::ErrorResponse::new(
-                    protocol::ErrorSeverity::Fatal,
-                    protocol::ErrorCode::InvalidAuthorizationSpecification,
-                    "no PostgreSQL user name specified in startup packet".to_string(),
-            );
-            buffer::write_message(&mut self.socket, error_response).await?;*/
+            ErrorResponse errorResponse = ErrorResponse.fatal(ErrorCode.InvalidAuthorizationSpecification,
+                    "no PostgreSQL user name specified in startup packet");
+            ctx.writeAndFlush(errorResponse);
             return new StartupState.Denied();
         }
 
-        ByteBuf buffer = ctx.alloc().buffer();
-        buffer.writeByte('R');
-        ctx.writeAndFlush(buffer);
-        return new StartupState.Success(parameters);
+        AuthenticationRequest authMethod = AuthenticationRequest.CleartextPassword;
+        ctx.writeAndFlush(authMethod);
+        return new StartupState.Success(parameters, authMethod);
     }
 
     StartupState processCancel(ChannelHandlerContext ctx, InitialMessage.CancelRequest canceMessage) {
         log.trace("Cancel request {}", canceMessage);
 
 //        ConnectionAttr connectionAttr = ctx.channel().attr(ChannelAttributeKey.CONN_ATTR).get();
+        if (true) {
+            // 获取session
+            if (true) {
+
+            } else {
+                log.trace("Unable to process cancel: wrong secret, {} != {}",
+                        "s.state.secret",
+                        canceMessage.getSecret()
+                );
+            }
+            // todo:取消session
+        } else {
+            log.trace("Unable to process cancel: unknown session");
+        }
         /*if let Some(s) = self
                 .session
                 .session_manager

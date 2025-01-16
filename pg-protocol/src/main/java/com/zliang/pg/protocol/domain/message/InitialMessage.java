@@ -1,20 +1,18 @@
 package com.zliang.pg.protocol.domain.message;
 
-import com.zliang.pg.protocol.util.ByteBufUtils;
+import com.zliang.pg.common.enums.ErrorCode;
+import com.zliang.pg.common.enums.ErrorSeverity;
+import com.zliang.pg.common.exceptions.PgErrorException;
+import com.zliang.pg.protocol.pkg.backend.StartupMessage;
 import io.netty.buffer.ByteBuf;
 import lombok.AllArgsConstructor;
 import lombok.Data;
-
-
-import java.util.HashMap;
 
 import static com.zliang.pg.common.constants.Constants.*;
 
 
 public interface InitialMessage {
     static InitialMessage from(ByteBuf buffer) {
-        int messageLength = buffer.readInt();
-
         var major = buffer.readShort();
         var minor = buffer.readShort();
         if (major == VERSION_MAJOR_SPECIAL) {
@@ -26,13 +24,15 @@ public interface InitialMessage {
                 case VERSION_MINOR_GSSENC:
                     return new Gssenc();
                 default:
-                   throw new RuntimeException("Unsupported special version in initial message with code "+minor);
+                    throw new PgErrorException(ErrorSeverity.Error, ErrorCode.ProtocolViolation,
+                            "Unsupported special version in initial message with code " + minor);
             }
         } else {
-            buffer.resetReaderIndex();
+//            buffer.resetReaderIndex();
             return new Startup(StartupMessage.from(buffer));
         }
     }
+
     record Startup(StartupMessage startup) implements InitialMessage {
 
     }
@@ -47,32 +47,6 @@ public interface InitialMessage {
 
     record Gssenc() implements InitialMessage {
 
-    }
-
-    @Data
-    @AllArgsConstructor
-    class StartupMessage {
-        short major;
-        short minor;
-        HashMap<String, String> parameters;
-
-        static StartupMessage from(ByteBuf buffer) {
-//            Startup packet
-//            int32 len int32 protocol str name \0 str value ... \0
-            int len = buffer.readInt();
-            short major = buffer.readShort();
-            short minor = buffer.readShort();
-            HashMap parameters = new HashMap();
-            while (true) {
-                String name = ByteBufUtils.readCString(buffer);
-                if (name == null) {
-                    break;
-                }
-                String value = ByteBufUtils.readCString(buffer);
-                parameters.put(name, value);
-            }
-            return new StartupMessage(major, minor, parameters);
-        }
     }
 
     @Data

@@ -57,7 +57,7 @@ public class PostgreSQLServer {
                             }
 //                            p.addLast(new LoggingHandler(LogLevel.INFO));
                             p.addLast(new PostgreSQLDecoder());
-//                            p.addLast(new PostgreSQLEncoder());
+                            p.addLast(new PostgreSQLEncoder());
                             p.addLast(serverHandler);
                         }
                     });

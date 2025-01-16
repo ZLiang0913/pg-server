@@ -1,9 +1,11 @@
 package com.zliang.pg.protocol.domain;
 
+import com.zliang.pg.protocol.enums.AuthenticationRequest;
+
 import java.util.HashMap;
 
 public interface StartupState {
-    record Success(HashMap<String, String> parameters) implements StartupState {
+    record Success(HashMap<String, String> parameters, AuthenticationRequest authMethod) implements StartupState {
 
     }
 
